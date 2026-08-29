@@ -1,113 +1,53 @@
-# Rosetta — Canonicalizer
+# Rosetta
 
-> One schema to rule them all: any event stream → ECS v8 + OSSEM.
+Event canonicalizer for the [Citadel](https://github.com/sltcnb/citadel) pipeline. Maps a `ForensicEvent` stream onto ECS v8 and OSSEM.
 
-**Status: partial** (standalone CLI works; daemon + OSSEM/ATT&CK enrichment pending).
+Parsers disagree about field names. Rosetta is the layer that makes them agree, so a timeline built from EVTX, Zeek and CloudTrail can be queried with one set of field names. Mapping is driven by config rather than code, so a new source is a field map, not a patch.
 
-## Pipeline position
-
-```
-Babel ──ForensicEvent──▶ Rosetta ──ECS v8 + OSSEM──▶ store / Sigil / Anvil / Augur / timeline
-```
-
-Sits between parse and index so the timeline, search, Sigil, and Scribe all read **one** schema.
-
-- **Inputs** — a `ForensicEvent` JSONL stream (`forensic_event/v1.json`).
-- **Outputs** — ECS v8 documents + OSSEM/ATT&CK fields (`ecs_extension`), optionally GeoIP/ASN/rDNS-enriched.
-
-## Contracts
-
-| Direction | Contract | Schema |
-|---|---|---|
-| Consumes | ForensicEvent v1 (`application/x-ndjson`) | `https://citadel.dfir/contracts/forensic_event/v1.json` |
-| Produces | ECS extension (ECS v8 + OSSEM), all artifact types | `https://citadel.dfir/contracts/ecs_extension` |
-
-Contracts are versioned in the [citadel-contracts](https://github.com/sltcnb/citadel-contracts)
-repo (see `forensic_event.schema.json`, `ecs_extension.md` there).
+Status is partial: the normalize path and the daemon work, and the mapping coverage is still growing.
 
 ## Install
-```
-git clone https://github.com/sltcnb/rosetta && cd rosetta
-pip install -e .            # provides the `rosetta` console script (PyYAML only)
-```
 
-## Standalone
-```
-rosetta normalize events.jsonl --ecs 8.11 -o ecs.jsonl
-rosetta normalize - --ecs 8.11 < events.jsonl > ecs.jsonl   # stdin/stdout
-rosetta normalize events.jsonl --map mymaps.yaml -o ecs.jsonl
-rosetta daemon --watch /var/log --es http://es:9200          # planned
+```bash
+pip install git+https://github.com/sltcnb/rosetta
 ```
 
-Try it on the bundled sample:
+Python 3.11 or newer.
+
+## Normalizing a file
+
+```bash
+rosetta normalize events.jsonl -o ecs.jsonl
 ```
-rosetta normalize examples/sample.jsonl --ecs 8.11 -o ecs.jsonl
+
+Input is newline-delimited JSON of `ForensicEvent` objects. Output is newline-delimited ECS v8.
+
+## Running as a daemon
+
+```bash
+rosetta daemon --watch ./incoming --es http://localhost:9200
 ```
 
-## Field map
-The `artifact_type` → ECS `event.category`/`event.type` mapping and the
-per-type `raw` field copies are config-driven in `rosetta/fieldmaps/default.yaml`.
-Covers `windows_event` (EVTX), `process` (Sysmon), `syslog`, and `prefetch`.
-Point `--map` at your own yaml to extend coverage without code changes.
+Watches an input path and writes to Elasticsearch. Useful flags: `--watch` for the directory to follow, `--es` for the target cluster, `--map` for the field map, `--interval` for poll frequency, and `--once` to drain and exit.
 
-## Capabilities
-- [●] ECS-shaped events (`@timestamp`, `ecs.version`, `event.*`, host/user/process, `citadel.raw`)
-- [●] Standalone CLI: ForensicEvent JSONL → ECS v8 JSONL
-- [●] Config-driven field maps (ECS categorization + raw field copies)
-- [●] ECS version pinning (`--ecs`)
-- [◐] Shared canonicalizer (consolidate mapping out of parsers)
-- [ ] OSSEM relationships + Sigma-tag→ATT&CK technique enrichment
-- [ ] Daemon: watch + ES out + disk-backed backpressure
-- [●] Enrichment hooks: GeoIP / ASN / reverse-DNS on public IP fields (`enrich.py`)
+## Field maps
 
-## Enrichment (GeoIP / ASN / rDNS)
-Public IPs on ECS fields (`source.ip`, `destination.ip`, `client.ip`, `server.ip`)
-are annotated with `*.geo.{country_iso_code,country_name,city_name,location}` and
-`*.as.{number,organization_name}`; reverse-DNS (`*.domain`) is opt-in.
-
-```
-pip install -e '.[enrich]'                 # adds geoip2
-export GEOIP_CITY_DB=/usr/share/GeoIP/GeoLite2-City.mmdb
-export GEOIP_ASN_DB=/usr/share/GeoIP/GeoLite2-ASN.mmdb
-export ROSETTA_ENABLE_RDNS=true            # optional, slow — off by default
-```
-Graceful no-op when `geoip2` or the `.mmdb` files are absent — normalization never
-fails on missing enrichment. Private/loopback/reserved IPs are skipped.
-
-## Configuration
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `GEOIP_CITY_DB` | `/usr/share/GeoIP/GeoLite2-City.mmdb` | MaxMind City DB for `*.geo.*` fields |
-| `GEOIP_ASN_DB` | `/usr/share/GeoIP/GeoLite2-ASN.mmdb` | MaxMind ASN DB for `*.as.*` fields |
-| `ROSETTA_ENABLE_RDNS` | off | Truthy (`1/true/yes/on`) enables reverse-DNS `*.domain` (slow, network) |
-
-Everything else is CLI flags (`--ecs`, `--map`, `-o`).
-
-## Health
-```
-rosetta --version
-```
+Maps live as config and are applied per source. Examples are under [`examples/`](examples/). GeoIP enrichment is available through `geoip2` if you supply a database.
 
 ## Tests
-```
-pip install -e '.[test]'
-pytest tests/     # test_normalize.py, test_enrich.py, test_daemon.py
-```
 
-**Done when:** single canonicalizer; CLI + daemon parse EVTX + syslog → ECS.
+```bash
+pip install pytest pyyaml
+pip install -e .
+pytest -q
+```
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — run, modify and self-host for any
-**noncommercial** purpose. Commercial use requires prior written authorization
-signed by the copyright holder. See [LICENSING.md](LICENSING.md).
+[PolyForm Noncommercial 1.0.0](LICENSE). Run, modify and self-host it for any noncommercial purpose. Commercial use needs written authorization from the copyright holder; see [LICENSING.md](LICENSING.md).
 
-## Part of the Citadel suite
-Runs between parse and index so the timeline and search see one schema.
-Upstream: [Babel](https://github.com/sltcnb/babel) (emits ForensicEvent).
-Downstream: Elasticsearch (daemon mode, per `brick.yaml`), then
-[Sigil](https://github.com/sltcnb/sigil), [Anvil](https://github.com/sltcnb/anvil),
-[Augur](https://github.com/sltcnb/augur) read the ECS output.
-Platform: [citadel](https://github.com/sltcnb/citadel) · Contracts (incl. `ecs_extension.md`):
-[citadel-contracts](https://github.com/sltcnb/citadel-contracts).
+This is a source-available license, not an OSI-approved open source license.
+
+## Related
+
+[Citadel](https://github.com/sltcnb/citadel) · [Sluice](https://github.com/sltcnb/sluice) upstream · [Sigil](https://github.com/sltcnb/sigil) and [Anvil](https://github.com/sltcnb/anvil) consume the normalized stream · [citadel-contracts](https://github.com/sltcnb/citadel-contracts)
