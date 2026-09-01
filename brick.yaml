@@ -1,7 +1,7 @@
 # Rosetta — canonicalizer (any event stream -> ECS v8 + OSSEM)
 name: Rosetta
 kind: canonicalizer
-version: "0.1.0"
+version: "0.2.0"
 repository: rosetta
 status: partial
 consumes:
